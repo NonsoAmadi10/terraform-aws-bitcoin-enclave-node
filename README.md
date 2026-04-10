@@ -91,43 +91,76 @@ The process of launching and verifying the enclave is fully automated:
 6.  **Runtime Attestation:** After launch, the parent application requests a signed **attestation document** from the running enclave. It verifies that the PCR0 measurement inside this document also matches the `expected_measurement`.
 7.  **Secret Provisioning (Optional):** Only after successful runtime attestation does the parent application proceed. If a `kms_key_arn` is provided, it can now use KMS to decrypt secrets and securely pass them to the enclave over the encrypted VSOCK channel.
 
-## 4. How to Use
+## 4. How to Use (Beginner Friendly)
 
-This module can be used by following the example provided in the `examples/minimal` directory.
+If you just learned Terraform, think of this as:
+- **Provider** = how Terraform talks to AWS
+- **Module** = reusable infrastructure package
+- **Apply** = actually creates cloud resources
 
-### Step 1: Configure the Example
-
-Navigate to `examples/minimal/main.tf` and configure the module block:
+### 1. Create a `main.tf`
 
 ```terraform
-module "enclave_node" {
-  source = "NonsoAmadi10/bitcoin-enclave-node/aws"
+terraform {
+  required_version = ">= 1.5.0"
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = ">= 5.0"
+    }
+  }
+}
 
-  aws_region = "us-east-1"
-  
-  # Replace with a PUBLIC git repository containing your enclave_app
+provider "aws" {
+  region = "us-east-1"
+}
+
+module "enclave_node" {
+  source  = "NonsoAmadi10/bitcoin-enclave-node/aws"
+  version = "1.1.0"
+
+  aws_region         = "us-east-1"
   git_repository_url = "https://github.com/your-username/your-enclave-app-repo.git"
 
-  # Restrict SSH ingress to trusted IP ranges. Empty list disables SSH ingress.
+  # Optional but recommended for debugging access
+  # Use your own public IP in CIDR format (/32 = one IP)
   allowed_cidrs = ["203.0.113.10/32"]
-  
-  # See the PCR0 Measurement Workflow below
-  expected_measurement = "your-eif-pcr0-measurement-hash-goes-here"
+
+  # First run: keep this empty, then fill it after you read logs
+  expected_measurement = ""
 }
 ```
 
-### Step 2: The PCR0 Measurement Workflow
+### 2. Run Terraform commands
 
-The `expected_measurement` variable is the key to ensuring the integrity of your enclave. Here is the workflow to set it correctly:
+```bash
+terraform init
+terraform plan
+terraform apply
+```
 
-1.  **First Deployment (Leave Blank):** On your very first deployment, comment out or leave `expected_measurement` as an empty string.
-2.  **Apply Terraform:** Run `terraform init` and `terraform apply`. This will build the EC2 instance.
-3.  **Find the PCR0 Measurement:** The `user_data` script will build the `.eif` and calculate its PCR0 hash. You can find this value in the EC2 instance logs (either via the AWS Console's "Instance Settings -> Get instance screenshot" or by SSHing into the instance and checking the systemd logs for `enclave-broker.service`). Look for a line like this:
-    ```
-    Actual EIF PCR0 Measurement: 9a8b...
-    ```
-4.  **Update and Redeploy:** Copy this hash value and paste it into the `expected_measurement` variable in your `.tf` file.
-5.  **Subsequent Deployments:** From now on, every time Terraform runs, the `setup_enclave.sh` script will verify that the newly built EIF has this exact measurement. If it ever changes, the setup will fail, protecting you from running untrusted code.
+### 3. Set the PCR0 measurement after first deploy
+
+After the first `apply`, check instance logs for:
+
+```
+Actual EIF PCR0 Measurement: <hash>
+```
+
+Copy that hash into `expected_measurement`, then run:
+
+```bash
+terraform apply
+```
+
+From then on, the host only starts the enclave if the built EIF matches that exact trusted measurement.
+
+### 4. Prefer the full working example
+
+If you want a ready-made starting point, use `examples/minimal/main.tf` and replace only:
+- `git_repository_url`
+- `allowed_cidrs`
+- `expected_measurement` (after first deploy)
 
 ## 5. Module Inputs and Outputs
 
