@@ -101,15 +101,15 @@ Navigate to `examples/minimal/main.tf` and configure the module block:
 
 ```terraform
 module "enclave_node" {
-  source = "../../modules/bitcoin-enclave-node"
+  source = "NonsoAmadi10/bitcoin-enclave-node/aws"
 
   aws_region = "us-east-1"
   
   # Replace with a PUBLIC git repository containing your enclave_app
   git_repository_url = "https://github.com/your-username/your-enclave-app-repo.git"
 
-  # WARNING: For production, you MUST restrict this to your IP address.
-  allowed_cidrs = ["0.0.0.0/0"] 
+  # Restrict SSH ingress to trusted IP ranges. Empty list disables SSH ingress.
+  allowed_cidrs = ["203.0.113.10/32"]
   
   # See the PCR0 Measurement Workflow below
   expected_measurement = "your-eif-pcr0-measurement-hash-goes-here"
@@ -139,7 +139,7 @@ The `expected_measurement` variable is the key to ensuring the integrity of your
 | `name_prefix`          | A prefix used for all created resources to ensure unique names.                                     | `string`      | `"btc-enclave"` |
 | `git_repository_url`   | The URL of the git repository to clone onto the instance. Must contain the `enclave_app` directory.   | `string`      | (required)    |
 | `instance_type`        | The EC2 instance type for the enclave host. Must be Nitro Enclaves compatible.                        | `string`      | `"m5.xlarge"` |
-| `allowed_cidrs`        | A list of CIDR blocks to allow SSH access from.                                                     | `list(string)`| `["0.0.0.0/0"]` |
+| `allowed_cidrs`        | A list of CIDR blocks allowed to SSH to the host. Empty list disables SSH ingress.                 | `list(string)`| `[]`          |
 | `expected_measurement` | The expected PCR0 measurement of the enclave image. Used for integrity verification.                | `string`      | `""`          |
 | `kms_key_arn`          | Optional: The ARN of the KMS key to use for secret unwrapping within the enclave.                     | `string`      | `null`        |
 | `log_sink`             | Optional: The destination for logs (e.g., CloudWatch Log Group ARN).                                | `string`      | `null`        |
@@ -179,92 +179,14 @@ Contributions are welcome! This project is intended as a learning tool and a fou
 
 Please make sure to update tests as appropriate and ensure the CI pipeline passes.
 
-## 8. CI/CD with OIDC
+## 8. CI/CD
 
-This project includes a GitHub Actions workflow (`.github/workflows/ci.yml`) that automates testing. To securely run Terraform commands that interact with your AWS account (like `terraform plan`), the workflow uses OIDC (OpenID Connect) to authenticate with AWS without needing long-lived secrets.
+The repository includes a GitHub Actions workflow (`.github/workflows/ci.yml`) that runs:
 
-### How it Works
-1.  GitHub provides a temporary OIDC token to the workflow runner.
-2.  The workflow assumes an IAM Role in your AWS account.
-3.  The IAM Role's trust policy is configured to only grant access to your specific GitHub repository.
-4.  AWS verifies the OIDC token and provides the workflow with short-lived AWS credentials.
-5.  The workflow uses these credentials to run `terraform plan`.
+- `terraform fmt -check -recursive`
+- `terraform init -backend=false` and `terraform validate` in `examples/minimal`
+- `tflint` on the example module tree
+- `go vet` and `go test` for the enclave app
 
-### How to Set Up OIDC
-
-#### Step 1: Add the OIDC Provider in your AWS Account (Manual)
-
-This is a one-time setup in your AWS account.
-
-1.  Navigate to **IAM** in the AWS Console.
-2.  Go to **Identity providers** and click **Add provider**.
-3.  Select **OpenID Connect**.
-4.  For the **Provider URL**, enter `https://token.actions.githubusercontent.com`.
-5.  For the **Audience**, enter `sts.amazonaws.com`.
-6.  Click **Get thumbprint** to verify the server certificate.
-7.  Click **Add provider**.
-
-#### Step 2: Create the IAM Role for GitHub Actions (Terraform)
-
-Add the following Terraform code to a file in your root deployment project (e.g., you can create `oidc.tf` alongside your `main.tf`). **Do not add this inside the module.**
-
-Replace `your-github-username/your-repo-name` with your actual GitHub repository path.
-
-```terraform
-data "aws_iam_policy_document" "github_actions_trust_policy" {
-  statement {
-    actions = ["sts:AssumeRoleWithWebIdentity"]
-    effect  = "Allow"
-
-    principals {
-      type        = "Federated"
-      identifiers = ["arn:aws:iam::${data.aws_caller_identity.current.account_id}:oidc-provider/token.actions.githubusercontent.com"]
-    }
-
-    # This condition scopes the role to your specific repository and main branch
-    condition {
-      test     = "StringLike"
-      variable = "token.actions.githubusercontent.com:sub"
-      values   = ["repo:your-github-username/your-repo-name:ref:refs/heads/main"]
-    }
-  }
-}
-
-resource "aws_iam_role" "github_actions_role" {
-  name               = "github-actions-role"
-  assume_role_policy = data.aws_iam_policy_document.github_actions_trust_policy.json
-
-  # This policy should be scoped down to the minimum required permissions
-  # for your CI/CD pipeline. For a terraform plan, it needs read access.
-  inline_policy {
-    name = "terraform-plan-policy"
-    policy = jsonencode({
-      Version   = "2012-10-17",
-      Statement = [
-        {
-          Effect   = "Allow",
-          Action   = "sts:GetCallerIdentity",
-          Resource = "*"
-        },
-        # Add other read-only permissions needed for terraform plan
-      ]
-    })
-  }
-}
-
-data "aws_caller_identity" "current" {}
-
-output "github_actions_role_arn" {
-  description = "The ARN of the IAM role for GitHub Actions OIDC."
-  value       = aws_iam_role.github_actions_role.arn
-}
-```
-
-#### Step 3: Update the GitHub Actions Workflow
-
-1.  Run `terraform apply` to create the `github_actions_role` and get its ARN from the output.
-2.  Open the `.github/workflows/ci.yml` file.
-3.  Find the `aws-actions/configure-aws-credentials` step.
-4.  Replace the placeholder `role-to-assume` ARN with the actual ARN of the role you just created.
-
-Your CI/CD pipeline is now configured to securely authenticate with AWS.
+This default CI does not require AWS credentials.  
+If you later add deployment workflows (`terraform plan/apply`), prefer OIDC-based short-lived credentials and scope IAM permissions to least privilege.

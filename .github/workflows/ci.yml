@@ -6,11 +6,6 @@ on:
   pull_request:
     branches: [ "main" ]
 
-# Add permissions for OIDC
-permissions:
-  id-token: write
-  contents: read
-
 jobs:
   test-terraform:
     name: "Test Terraform"
@@ -20,38 +15,28 @@ jobs:
         uses: actions/checkout@v3
 
       - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v2
+        uses: hashicorp/setup-terraform@v3
         with:
-          terraform_version: "1.2.0"
-
-      - name: Configure AWS Credentials from OIDC
-        uses: aws-actions/configure-aws-credentials@v2
-        with:
-          # This placeholder will be replaced by the actual ARN of the role created
-          # See README.md for instructions on creating this role.
-          role-to-assume: arn:aws:iam::123456789012:role/github-actions-role 
-          aws-region: us-east-1 # Or your preferred region
+          terraform_version: "1.6.6"
 
       - name: Terraform Init
         id: init
-        run: terraform -chdir=examples/minimal init
+        run: terraform -chdir=examples/minimal init -backend=false
 
       - name: Terraform Validate
         id: validate
-        run: terraform validate -no-color
+        run: terraform -chdir=examples/minimal validate -no-color
 
-      - name: Terraform Plan
-        id: plan
-        run: terraform -chdir=examples/minimal plan -no-color
-        continue-on-error: true # Allow plan to fail if variables are not set
+      - name: Terraform Fmt Check
+        run: terraform fmt -check -recursive
 
       - name: TFLint
         uses: terraform-linters/setup-tflint@v3
         with:
-          tflint_version: v0.40.0
+          tflint_version: v0.50.3
 
       - name: Run TFLint
-        run: tflint --module --force
+        run: tflint --chdir=examples/minimal --module --force
         
   test-go:
     name: "Test Go"
@@ -61,9 +46,9 @@ jobs:
         uses: actions/checkout@v3
         
       - name: Setup Go
-        uses: actions/setup-go@v3
+        uses: actions/setup-go@v5
         with:
-          go-version: '1.18'
+          go-version: "1.22"
 
       - name: Check Go formatting
         run: |
